@@ -1,0 +1,1 @@
+-- Local Elevate seed data will be added with the first application schema.

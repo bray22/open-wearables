@@ -1,0 +1,37 @@
+[project]
+name = "elevate-api"
+version = "0.1.0"
+description = "Elevate fitness scoring API"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.139.2",
+    "pyjwt[crypto]>=2.10.1",
+    "uvicorn[standard]>=0.41.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["ANN", "E", "F", "FAST", "I", "N", "PT", "RET", "SIM", "W"]
+ignore = ["ANN401"]
+
+[build-system]
+requires = ["uv_build"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+module-name = "app"

@@ -1,6 +1,7 @@
 DOCKER_COMMAND = docker compose -f docker-compose.yml
 DOCKER_EXEC = $(DOCKER_COMMAND) exec app
 ALEMBIC_CMD = uv run alembic
+ELEVATE_DOCKER_COMMAND = docker compose -f docker-compose.yml -f docker-compose.elevate.yml
 
 help:	## Show this help.
 	@echo "============================================================"
@@ -49,3 +50,31 @@ downgrade:  ## Revert the last migration
 
 reset_db:  ## Truncate all tables in the database (WARNING: deletes all data)
 	$(DOCKER_EXEC) uv run python scripts/reset_database.py
+
+elevate-up:  ## Start Supabase and the full Open Wearables + Elevate stack in the foreground
+	./scripts/elevate-dev.sh
+
+elevate-run:  ## Start Supabase and the full Open Wearables + Elevate stack in detached mode
+	supabase start
+	$(ELEVATE_DOCKER_COMMAND) up -d --build
+
+elevate-down:  ## Stop the full Open Wearables + Elevate stack and Supabase
+	$(ELEVATE_DOCKER_COMMAND) down
+	supabase stop
+
+elevate-test:  ## Run Elevate API tests
+	docker run --rm -v "$(CURDIR)/apps/api:/app" -w /app ghcr.io/astral-sh/uv:python3.14-bookworm uv run pytest
+
+elevate-lint:  ## Run Elevate API Ruff checks
+	docker run --rm -v "$(CURDIR)/apps/api:/app" -w /app ghcr.io/astral-sh/uv:python3.14-bookworm uv run ruff check .
+	docker run --rm -v "$(CURDIR)/apps/api:/app" -w /app ghcr.io/astral-sh/uv:python3.14-bookworm uv run ruff format --check .
+
+elevate-auth-users:  ## Create/update local Elevate auth users (requires ELEVATE_TEST_USER_PASSWORD)
+	python3 scripts/seed-elevate-auth-users.py
+
+elevate-auth-test: elevate-auth-users  ## Test Supabase login and /me with Bruno
+	@eval "$$(supabase status -o env 2>/dev/null)"; \
+	cd apps/api/bruno && npx --yes @usebruno/cli run . -r --env local \
+		--env-var "supabase_key=$$PUBLISHABLE_KEY" \
+		--env-var "test_password=$$ELEVATE_TEST_USER_PASSWORD" \
+		--tests-only --bail

@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Elevate API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

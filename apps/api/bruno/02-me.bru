@@ -1,0 +1,22 @@
+meta {
+  name: Current user
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{api_url}}/me
+  body: none
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{access_token}}
+}
+
+tests {
+  test("returns the authenticated user", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.user_id).to.be.a("string");
+  });
+}

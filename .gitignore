@@ -9,6 +9,7 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+audit/output/
 develop-eggs/
 dist/
 downloads/
@@ -174,6 +175,9 @@ CLAUDE.local.md
 
 # Exception: generated OpenAPI spec that feeds the docs API Reference
 !docs/openapi.json
+
+# Exception: committed Bruno API collection manifests
+!apps/api/bruno/bruno.json
 
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json
