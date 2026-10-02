@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Annotated, Literal
-from uuid import UUID
 from urllib.parse import urlencode, urlsplit
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -82,7 +82,11 @@ def mobile_oauth_return(
     deep_link = f"elevate://wearables/callback?{urlencode(params)}"
     safe_deep_link = escape(deep_link, quote=True)
     heading = "Connection complete" if status_value == "success" else "Connection not completed"
-    message = "Return to ELEVATE to view the connection." if status_value == "success" else "You can return to ELEVATE and try again."
+    message = (
+        "Return to ELEVATE to view the connection."
+        if status_value == "success"
+        else "You can return to ELEVATE and try again."
+    )
     html = (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
