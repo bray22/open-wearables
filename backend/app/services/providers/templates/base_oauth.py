@@ -5,7 +5,7 @@ import secrets
 from abc import ABC, abstractmethod
 from base64 import b64encode, urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import httpx
@@ -67,7 +67,11 @@ class BaseOAuthTemplate(ABC):
     use_pkce: bool = False
     auth_method: AuthenticationMethod = AuthenticationMethod.BASIC_AUTH
 
-    def get_authorization_url(self, user_id: UUID, redirect_uri: str | None = None) -> tuple[str, str]:
+    def get_authorization_url(
+        self,
+        user_id: UUID,
+        flow_origin: Literal["web", "mobile"] = "web",
+    ) -> tuple[str, str]:
         """Generates the provider's authorization URL.
 
         Returns:
@@ -78,7 +82,7 @@ class BaseOAuthTemplate(ABC):
         oauth_state = OAuthState(
             user_id=user_id,
             provider=self.provider_name,
-            redirect_uri=redirect_uri,  # Only store if explicitly provided by frontend
+            flow_origin=flow_origin,
         )
 
         auth_url, pkce_data = self._build_auth_url(state)
@@ -102,6 +106,11 @@ class BaseOAuthTemplate(ABC):
 
     def handle_callback(self, db: DbSession, code: str, state: str) -> OAuthState:
         """Handles the OAuth callback, exchanges code, and saves the connection."""
+        oauth_state, code_verifier = self.consume_callback_state(state)
+        return self.complete_callback(db, code, oauth_state, code_verifier)
+
+    def consume_callback_state(self, state: str) -> tuple[OAuthState, str | None]:
+        """Consume and validate state before handling either success or denial callbacks."""
         oauth_state, code_verifier = self._validate_state(state)
 
         if oauth_state.provider != self.provider_name:
@@ -115,6 +124,17 @@ class BaseOAuthTemplate(ABC):
                 state_provider=oauth_state.provider,
             )
             raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="Provider mismatch in state")
+
+        return oauth_state, code_verifier
+
+    def complete_callback(
+        self,
+        db: DbSession,
+        code: str,
+        oauth_state: OAuthState,
+        code_verifier: str | None,
+    ) -> OAuthState:
+        """Exchange a code and save a connection for already-validated state."""
 
         token_response = self._exchange_token(code, code_verifier)
 

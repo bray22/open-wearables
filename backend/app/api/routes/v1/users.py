@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Header, Query, status
 
 from app.database import DbSession
 from app.schemas.model_crud.user_management import (
@@ -76,8 +76,19 @@ def get_user(
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED, response_model=UserRead)
-def create_user(payload: UserCreate, db: DbSession, _api_key: ApiKeyDep):
-    return user_service.create(db, payload)
+def create_user(
+    payload: UserCreate,
+    db: DbSession,
+    _api_key: ApiKeyDep,
+    idempotency_key: Annotated[
+        UUID | None,
+        Header(
+            alias="Idempotency-Key",
+            description="Opaque UUID that makes repeated user-creation requests return the same user.",
+        ),
+    ] = None,
+):
+    return user_service.create(db, payload, idempotency_key=idempotency_key)
 
 
 @router.delete("/users/{user_id}", response_model=UserRead)

@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from html import escape
+from typing import Annotated, Literal
 from uuid import UUID
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.config import settings
 from app.constants.provider_urls import from_url_slug
@@ -54,7 +56,7 @@ def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
 def authorize_provider(
     provider: str,
     user_id: Annotated[UUID, Query(description="User ID to connect")],
-    redirect_uri: Annotated[str | None, Query(description="Optional redirect URI after authorization")] = None,
+    flow_origin: Annotated[Literal["web", "mobile"], Query(description="Client that initiated this flow")] = "web",
 ):
     """
     Initiate OAuth flow for a provider.
@@ -64,8 +66,49 @@ def authorize_provider(
     strategy = get_oauth_strategy(resolve_provider(provider))
 
     assert strategy.oauth
-    auth_url, state = strategy.oauth.get_authorization_url(user_id, redirect_uri)
+    auth_url, state = strategy.oauth.get_authorization_url(user_id, flow_origin)
     return AuthorizationURLResponse(authorization_url=auth_url, state=state)
+
+
+def mobile_oauth_return(
+    provider: str,
+    status_value: Literal["success", "error"],
+    error_code: str | None = None,
+) -> HTMLResponse:
+    """Attempt the fixed app deep link and leave a manual fallback if it cannot open."""
+    params = {"provider": provider, "status": status_value}
+    if error_code:
+        params["error"] = error_code
+    deep_link = f"elevate://wearables/callback?{urlencode(params)}"
+    safe_deep_link = escape(deep_link, quote=True)
+    heading = "Connection complete" if status_value == "success" else "Connection not completed"
+    message = "Return to ELEVATE to view the connection." if status_value == "success" else "You can return to ELEVATE and try again."
+    html = (
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        f"<meta http-equiv=\"refresh\" content=\"0;url={safe_deep_link}\">"
+        "<title>Return to ELEVATE</title></head><body>"
+        f"<main><h1>{heading}</h1><p>{message}</p><a href=\"{safe_deep_link}\">Return to ELEVATE</a></main>"
+        "</body></html>"
+    )
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+def web_oauth_return() -> str:
+    """Build the configured web destination without accepting callback URL input."""
+    destination = settings.elevate_web_return_url
+    parsed = urlsplit(destination)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path != "/member/wearables"
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("ELEVATE_WEB_RETURN_URL must be an absolute URL ending in /member/wearables.")
+    return destination
 
 
 @router.head("/{provider}/callback", tags=["System: OAuth"])
@@ -88,15 +131,9 @@ def oauth_callback(
 
     Provider redirects here after user authorizes. Exchanges code for tokens.
     """
-    if error:
+    if not state:
         return RedirectResponse(
-            url=f"/api/v1/oauth/error?message={error}:+{error_description or 'Unknown+error'}",
-            status_code=303,
-        )
-
-    if not code or not state:
-        return RedirectResponse(
-            url="/api/v1/oauth/error?message=Missing+OAuth+parameters",
+            url="/api/v1/oauth/error?message=Missing+OAuth+state",
             status_code=303,
         )
 
@@ -104,7 +141,31 @@ def oauth_callback(
     strategy = get_oauth_strategy(provider_name)
 
     assert strategy.oauth
-    oauth_state = strategy.oauth.handle_callback(db, code, state)
+    oauth_state, code_verifier = strategy.oauth.consume_callback_state(state)
+
+    if error:
+        if oauth_state.flow_origin == "mobile":
+            error_code = "cancelled" if error == "access_denied" else "provider_error"
+            return mobile_oauth_return(provider_name.value, "error", error_code)
+        return RedirectResponse(
+            url=f"/api/v1/oauth/error?message={error}:+{error_description or 'Unknown+error'}",
+            status_code=303,
+        )
+
+    if not code:
+        if oauth_state.flow_origin == "mobile":
+            return mobile_oauth_return(provider_name.value, "error", "provider_error")
+        return RedirectResponse(
+            url="/api/v1/oauth/error?message=Missing+OAuth+code",
+            status_code=303,
+        )
+
+    try:
+        oauth_state = strategy.oauth.complete_callback(db, code, oauth_state, code_verifier)
+    except Exception:
+        if oauth_state.flow_origin == "mobile":
+            return mobile_oauth_return(provider_name.value, "error", "connection_failed")
+        raise
 
     # Stamp last_synced_at=now so the first periodic sync uses the connection
     # timestamp as its live-sync cursor and won't attempt to pull all history.
@@ -133,15 +194,10 @@ def oauth_callback(
                 is_historical=True,
             )
 
-    # If a specific redirect_uri was requested (e.g. by frontend), redirect there
-    if oauth_state.redirect_uri:
-        return RedirectResponse(url=oauth_state.redirect_uri, status_code=303)
+    if oauth_state.flow_origin == "mobile":
+        return mobile_oauth_return(provider_name.value, "success")
 
-    # Otherwise, redirect to internal success page
-    return RedirectResponse(
-        url=f"/api/v1/oauth/success?provider={provider_name.value}&user_id={oauth_state.user_id}",
-        status_code=303,
-    )
+    return RedirectResponse(url=web_oauth_return(), status_code=303)
 
 
 @router.get("/success", tags=["System: OAuth"])

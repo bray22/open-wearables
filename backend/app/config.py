@@ -249,6 +249,7 @@ class Settings(BaseSettings):
     email_from_address: str | None = None
     email_from_name: str = "Open Wearables"
     frontend_url: str = "http://localhost:3000"
+    elevate_web_return_url: str = "http://localhost:3000/member/wearables"
     invitation_expire_days: int = 7
     email_max_retries: int = 5
 

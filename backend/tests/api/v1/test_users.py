@@ -255,6 +255,20 @@ class TestCreateUser:
         assert data["first_name"] is None
         assert data["last_name"] is None
 
+    def test_create_user_is_idempotent(self, client: TestClient, db: Session, api_v1_prefix: str) -> None:
+        developer = DeveloperFactory(email="test@example.com", password="test123")
+        api_key = ApiKeyFactory(developer=developer)
+        headers = {**api_key_headers(api_key.plain_key), "Idempotency-Key": str(uuid4())}
+        payload = {"email": "idempotent@example.com", "first_name": "Ida"}
+
+        first = client.post(f"{api_v1_prefix}/users", json=payload, headers=headers)
+        second = client.post(f"{api_v1_prefix}/users", json=payload, headers=headers)
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert second.json()["id"] == first.json()["id"]
+        assert db.query(User).filter(User.email == "idempotent@example.com").count() == 1
+
     def test_create_user_invalid_email(self, client: TestClient, db: Session, api_v1_prefix: str) -> None:
         """Test creating user with invalid email format."""
         # Arrange

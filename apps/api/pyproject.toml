@@ -5,13 +5,15 @@ description = "Elevate fitness scoring API"
 requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.139.2",
+    "httpx>=0.28.1",
     "pyjwt[crypto]>=2.10.1",
+    "psycopg[binary]>=3.3.3",
+    "sqlalchemy>=2.0.48",
     "uvicorn[standard]>=0.41.0",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.16.7",
 ]

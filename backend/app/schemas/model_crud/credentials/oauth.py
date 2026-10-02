@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,7 +11,7 @@ class OAuthState(BaseModel):
 
     user_id: UUID
     provider: str
-    redirect_uri: str | None = None
+    flow_origin: Literal["web", "mobile"] = "web"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

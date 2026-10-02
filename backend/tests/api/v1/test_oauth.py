@@ -7,12 +7,19 @@ Tests the /api/v1/oauth endpoints including:
 - PUT /api/v1/oauth/providers/{provider} - test update provider status
 """
 
+from types import SimpleNamespace
+from typing import Literal
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pytest import MonkeyPatch
 from sqlalchemy.orm import Session
 
+from app.api.routes.v1 import oauth as oauth_routes
+from app.schemas.model_crud.credentials.oauth import OAuthState
+from app.config import settings
 from tests.factories import DeveloperFactory
 from tests.utils import developer_auth_headers
 
@@ -41,7 +48,7 @@ class TestOAuthAuthorizeEndpoint:
         assert len(data["state"]) > 0
 
     def test_authorize_provider_with_redirect_uri(self, client: TestClient, db: Session) -> None:
-        """Test OAuth flow with optional redirect URI."""
+        """Legacy redirect_uri input is ignored; the server selects the final target."""
         # Arrange
         user_id = uuid4()
         redirect_uri = "https://myapp.com/oauth/callback"
@@ -60,6 +67,20 @@ class TestOAuthAuthorizeEndpoint:
         data = response.json()
         assert "authorization_url" in data
         assert "state" in data
+
+    def test_authorize_records_mobile_origin(self, client: TestClient, db: Session, monkeypatch: MonkeyPatch) -> None:
+        user_id = uuid4()
+        oauth = MagicMock()
+        oauth.get_authorization_url.return_value = ("https://provider.example/auth", "state")
+        monkeypatch.setattr(oauth_routes, "get_oauth_strategy", lambda _provider: SimpleNamespace(oauth=oauth))
+
+        response = client.get(
+            "/api/v1/oauth/garmin/authorize",
+            params={"user_id": str(user_id), "flow_origin": "mobile", "redirect_uri": "https://attacker.example"},
+        )
+
+        assert response.status_code == 200
+        oauth.get_authorization_url.assert_called_once_with(user_id, "mobile")
 
     def test_authorize_different_providers(self, client: TestClient, db: Session) -> None:
         """Test initiating OAuth for different providers."""
@@ -432,3 +453,105 @@ class TestOAuthCallbackProbe:
     def test_head_callback_invalid_provider(self, client: TestClient, db: Session) -> None:
         response = client.head("/api/v1/oauth/not-a-provider/callback")
         assert response.status_code == 400
+
+
+class TestOAuthCallbackReturns:
+    @staticmethod
+    def _install_callback_strategy(
+        monkeypatch: MonkeyPatch,
+        flow_origin: Literal["web", "mobile"],
+    ) -> MagicMock:
+        state = OAuthState(user_id=uuid4(), provider="garmin", flow_origin=flow_origin)
+        oauth = MagicMock()
+        oauth.consume_callback_state.return_value = (state, None)
+        oauth.complete_callback.return_value = state
+        strategy = SimpleNamespace(oauth=oauth, capabilities=SimpleNamespace(webhook_callback=False, rest_pull=False))
+        monkeypatch.setattr(oauth_routes, "get_oauth_strategy", lambda _provider: strategy)
+        monkeypatch.setattr(settings, "historical_sync_on_connect", False)
+        monkeypatch.setattr(oauth_routes.user_connection_service, "stamp_last_synced_at", lambda *_args: None)
+        return oauth
+
+    def test_mobile_success_returns_only_safe_deep_link_data(
+        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+    ) -> None:
+        oauth = self._install_callback_strategy(monkeypatch, "mobile")
+        response = client.get("/api/v1/oauth/garmin/callback", params={"code": "provider-code", "state": "server-state"})
+
+        assert response.status_code == 200
+        assert "elevate://wearables/callback?provider=garmin&amp;status=success" in response.text
+        assert "provider-code" not in response.text
+        oauth.consume_callback_state.assert_called_once_with("server-state")
+        oauth.complete_callback.assert_called_once()
+
+    def test_web_success_ignores_callback_origin_query_parameter(
+        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+    ) -> None:
+        self._install_callback_strategy(monkeypatch, "web")
+        monkeypatch.setattr(settings, "elevate_web_return_url", "https://elevatefitbody.com/member/wearables")
+
+        response = client.get(
+            "/api/v1/oauth/garmin/callback",
+            params={"code": "provider-code", "state": "server-state", "flow_origin": "mobile", "origin": "mobile"},
+        )
+
+        assert response.status_code == 303
+        assert response.headers["location"] == "https://elevatefitbody.com/member/wearables"
+
+    def test_mobile_provider_denial_maps_to_safe_cancelled_code(
+        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+    ) -> None:
+        oauth = self._install_callback_strategy(monkeypatch, "mobile")
+
+        response = client.get(
+            "/api/v1/oauth/garmin/callback",
+            params={"state": "server-state", "error": "access_denied", "error_description": "private provider detail"},
+        )
+
+        assert response.status_code == 200
+        assert "elevate://wearables/callback?provider=garmin&amp;status=error&amp;error=cancelled" in response.text
+        assert "private provider detail" not in response.text
+        oauth.complete_callback.assert_not_called()
+
+    def test_mobile_unknown_provider_error_uses_generic_safe_code(
+        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+    ) -> None:
+        self._install_callback_strategy(monkeypatch, "mobile")
+
+        response = client.get(
+            "/api/v1/oauth/garmin/callback",
+            params={"state": "server-state", "error": "provider_specific_secret"},
+        )
+
+        assert response.status_code == 200
+        assert "error=provider_error" in response.text
+        assert "provider_specific_secret" not in response.text
+
+    def test_mobile_connection_failure_uses_safe_error_code(
+        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+    ) -> None:
+        oauth = self._install_callback_strategy(monkeypatch, "mobile")
+        oauth.complete_callback.side_effect = HTTPException(status_code=400, detail="provider token exchange failed")
+
+        response = client.get(
+            "/api/v1/oauth/garmin/callback",
+            params={"state": "server-state", "code": "provider-code"},
+        )
+
+        assert response.status_code == 200
+        assert "error=connection_failed" in response.text
+        assert "provider token exchange failed" not in response.text
+
+    def test_expired_or_reused_state_is_rejected(
+        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+    ) -> None:
+        oauth = MagicMock()
+        oauth.consume_callback_state.side_effect = HTTPException(status_code=400, detail="Invalid or expired state parameter")
+        monkeypatch.setattr(oauth_routes, "get_oauth_strategy", lambda _provider: SimpleNamespace(oauth=oauth))
+
+        response = client.get(
+            "/api/v1/oauth/garmin/callback",
+            params={"code": "provider-code", "state": "expired-or-reused"},
+        )
+
+        assert response.status_code == 400
+        oauth.complete_callback.assert_not_called()

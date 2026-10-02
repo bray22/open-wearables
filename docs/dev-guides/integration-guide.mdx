@@ -490,16 +490,16 @@ async def get_auth_url(provider: str, user_id: str) -> str:
     Open Wearables handles the OAuth callback automatically.
   </Step>
   <Step title="Open Wearables redirects to your app">
-    Configure a `redirect_uri` parameter to return users to your app.
+    Configure the ELEVATE web return URL on the server. Mobile flows use the fixed ELEVATE app link; caller-supplied redirect URLs are not accepted.
   </Step>
 </Steps>
 
-### Custom Redirect URI
+### OAuth Return Target
 
-To redirect users back to your app after OAuth:
+The web return destination is configured server-side with `ELEVATE_WEB_RETURN_URL` (for example, `https://elevatefitbody.com/member/wearables`) and must use an absolute HTTP(S) URL with the exact `/member/wearables` path. Mobile ELEVATE requests use the fixed `elevate://wearables/callback` destination. Select the flow when requesting the authorization URL:
 
 ```bash
-curl "http://localhost:8000/api/v1/oauth/garmin/authorize?user_id=USER_ID&redirect_uri=https://yourapp.com/oauth/callback" \
+curl "http://localhost:8000/api/v1/oauth/garmin/authorize?user_id=USER_ID&flow_origin=web" \
   -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
 ```
 
@@ -919,7 +919,7 @@ async def main():
     auth_url = await client.get_auth_url(
         provider="garmin",
         user_id=user_id,
-        redirect_uri="https://myapp.com/callback",
+      flow_origin="web",
     )
     print(f"Redirect user to: {auth_url}")
 
@@ -999,10 +999,10 @@ async def main():
   </Accordion>
   
   <Accordion title="OAuth callback not redirecting to my app">
-    Pass the `redirect_uri` parameter when getting the authorization URL:
+    The callback target is selected by server-side configuration and `flow_origin`; arbitrary redirect URLs are not supported:
     
     ```bash
-    /api/v1/oauth/garmin/authorize?user_id=...&redirect_uri=https://myapp.com/callback
+    /api/v1/oauth/garmin/authorize?user_id=...&flow_origin=web
     ```
   </Accordion>
 </AccordionGroup>

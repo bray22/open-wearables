@@ -1,17 +1,19 @@
 """Tests for Garmin OAuth implementation."""
 
+import json
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models import User
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import AuthenticationMethod
-from app.schemas.model_crud.credentials import OAuthTokenResponse, ProviderCredentials, ProviderEndpoints
+from app.schemas.model_crud.credentials import OAuthState, OAuthTokenResponse, ProviderCredentials, ProviderEndpoints
 from app.services.providers.garmin.oauth import GarminOAuth
 from tests.factories import UserConnectionFactory, UserFactory
 
@@ -74,6 +76,42 @@ class TestGarminOAuth:
         assert "code_challenge_method=S256" in auth_url
         assert len(state) > 0
         mock_redis_client.setex.assert_called_once()
+
+    @patch("app.services.providers.templates.base_oauth.get_redis_client")
+    def test_mobile_flow_origin_is_stored_in_oauth_state(
+        self,
+        mock_get_redis: MagicMock,
+        garmin_oauth: GarminOAuth,
+    ) -> None:
+        redis_client = MagicMock()
+        mock_get_redis.return_value = redis_client
+        user_id = uuid4()
+
+        garmin_oauth.get_authorization_url(user_id, "mobile")
+
+        state_data = json.loads(redis_client.setex.call_args.args[2])
+        assert state_data["user_id"] == str(user_id)
+        assert state_data["flow_origin"] == "mobile"
+        assert "redirect_uri" not in state_data
+
+    @patch("app.services.providers.templates.base_oauth.get_redis_client")
+    def test_callback_state_is_consumed_once_and_expired_state_is_rejected(
+        self,
+        mock_get_redis: MagicMock,
+        garmin_oauth: GarminOAuth,
+    ) -> None:
+        redis_client = MagicMock()
+        state = OAuthState(user_id=uuid4(), provider="garmin", flow_origin="mobile")
+        redis_client.get.side_effect = [state.model_dump_json(), None]
+        mock_get_redis.return_value = redis_client
+
+        consumed_state, verifier = garmin_oauth.consume_callback_state("one-time-state")
+
+        assert consumed_state.flow_origin == "mobile"
+        assert verifier is None
+        redis_client.delete.assert_called_once_with("oauth_state:one-time-state")
+        with pytest.raises(HTTPException, match="Invalid or expired state parameter"):
+            garmin_oauth.consume_callback_state("one-time-state")
 
     @patch("httpx.get")
     def test_get_provider_user_info_success(

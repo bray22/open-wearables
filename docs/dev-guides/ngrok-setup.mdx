@@ -74,7 +74,7 @@ Why might ngrok be needed for the OAuth flow? Because Garmin's OAuth callback re
     3. Use it as the `redirect_uri` parameter:
     
     ```bash
-    curl "http://localhost:8000/api/v1/oauth/garmin/authorize?user_id=USER_ID&redirect_uri=https://abc123.ngrok-free.app/oauth/callback" \
+    curl "http://localhost:8000/api/v1/oauth/garmin/authorize?user_id=USER_ID&flow_origin=web" \
       -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
     ```
     
@@ -84,7 +84,7 @@ Why might ngrok be needed for the OAuth flow? Because Garmin's OAuth callback re
     
     ```bash
     # Use localhost directly
-    curl "http://localhost:8000/api/v1/oauth/polar/authorize?user_id=USER_ID&redirect_uri=http://localhost:8000/oauth/callback" \
+    curl "http://localhost:8000/api/v1/oauth/polar/authorize?user_id=USER_ID&flow_origin=web" \
       -H "X-Open-Wearables-API-Key: YOUR_API_KEY"
     ```
   </Accordion>

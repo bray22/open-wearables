@@ -333,6 +333,25 @@
         ],
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque UUID that makes repeated user-creation requests return the same user.",
+              "title": "Idempotency-Key"
+            },
+            "description": "Opaque UUID that makes repeated user-creation requests return the same user."
+          },
+          {
             "name": "X-Open-Wearables-API-Key",
             "in": "header",
             "required": false,

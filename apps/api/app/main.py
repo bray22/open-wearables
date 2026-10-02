@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from app.auth import CurrentUser
+from app.wearable_accounts import router as wearable_accounts_router
 
 
 class HealthResponse(BaseModel):
@@ -15,6 +16,7 @@ class MeResponse(BaseModel):
 
 
 app = FastAPI(title="Elevate API", version="0.1.0")
+app.include_router(wearable_accounts_router)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])

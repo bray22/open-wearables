@@ -102,6 +102,137 @@ When you rebase and `main` gained a migration in the meantime, `alembic heads` s
 8. **Update API Reference navigation** - When adding, removing, or renaming **external** API endpoints (tagged `External: *`), update the `API Reference` tab in `docs/docs.json` to keep the endpoint list in sync
 9. **Think beyond the current feature** - Before adding provider-specific or otherwise narrow logic, ask whether the same behavior will be needed elsewhere (other providers, entities). If likely, propose a shared abstraction upfront instead of a one-off implementation.
 
+
+## ELEVATE Fitness Integration
+
+This Open Wearables repository is used as the wearable-data integration service for the ELEVATE Fitness application.
+
+The sibling ELEVATE repository is expected at:
+
+`../elevate-fitness`
+
+When both repositories are available in the same VS Code workspace, agents may inspect and modify both repositories when a task explicitly requires coordinated integration changes.
+
+### Repository Responsibilities
+
+Open Wearables owns:
+
+- Wearable provider integrations
+- Provider OAuth flows
+- Provider access and refresh tokens
+- Open Wearables users
+- Wearable connections
+- Raw wearable data ingestion
+- Wearable data normalization
+- FastAPI endpoints and response models
+- The OpenAPI contract exposed by FastAPI
+
+ELEVATE owns:
+
+- Supabase authentication
+- ELEVATE member profiles
+- Memberships and bookings
+- ELEVATE Score calculations
+- ELEVATE-specific health business logic
+- Member-facing wearable UI
+- Web and mobile applications
+
+Do not move ELEVATE-specific scoring or business logic into Open Wearables.
+
+### API Contract
+
+The FastAPI-generated OpenAPI document is the source of truth for communication between Open Wearables and ELEVATE.
+
+During local development it is available at:
+
+`http://localhost:8000/openapi.json`
+
+ELEVATE generates TypeScript definitions from this contract with:
+
+`pnpm wearables:generate`
+
+Generated ELEVATE types live at:
+
+`packages/wearables-api/src/generated.ts`
+
+Do not create or maintain a separate handwritten OpenAPI specification unless explicitly requested.
+
+Do not manually modify generated API types in ELEVATE.
+
+When changing an endpoint consumed by ELEVATE:
+
+1. Make the API/model change in Open Wearables.
+2. Verify `/openapi.json` reflects the intended contract.
+3. Regenerate ELEVATE's TypeScript definitions.
+4. Update ELEVATE consumers if necessary.
+5. Run relevant tests and type checks in both repositories.
+
+Avoid silently changing endpoint paths, parameters, authentication requirements, or response schemas used by ELEVATE.
+
+### User Identity
+
+ELEVATE and Open Wearables have separate user identifiers.
+
+ELEVATE uses `profiles.id` as its canonical person/member identifier. A profile may link to Supabase Auth through nullable `profiles.auth_user_id`; these UUIDs are not always the same.
+
+Open Wearables uses its own user UUID for wearable-data endpoints.
+
+Do not assume these UUIDs are the same.
+
+`external_user_id` is deprecated and must not be used as the primary identity mechanism for ELEVATE integration.
+
+ELEVATE stores the Open Wearables UUID associated with the member, for example:
+
+`profiles.open_wearables_user_id`
+
+The expected relationship is:
+
+Supabase authenticated user
+→ ELEVATE profile via `profiles.auth_user_id`
+→ `open_wearables_user_id`
+→ Open Wearables user
+→ provider connections
+→ wearable data
+
+When an ELEVATE member needs an Open Wearables account:
+
+1. ELEVATE resolves the authenticated Supabase user to its profile.
+2. ELEVATE creates or retrieves the corresponding Open Wearables user with an idempotency key derived from `profiles.id`.
+3. Open Wearables returns its UUID.
+4. ELEVATE stores that UUID in the member profile.
+5. Future wearable API calls use that Open Wearables UUID.
+
+### Security Boundary
+
+Do not expose privileged Open Wearables credentials or provider tokens to the ELEVATE browser or mobile client.
+
+Preferred request flow:
+
+ELEVATE web/mobile client
+→ ELEVATE Next.js server route under `apps/web/app/api/member/wearables`
+→ authenticated Supabase member
+→ stored Open Wearables UUID
+→ Open Wearables API
+
+Never trust an arbitrary Open Wearables user UUID supplied by a browser without verifying that it belongs to the authenticated ELEVATE member.
+
+### Cross-Repository Changes
+
+The repositories remain independent Git repositories even when opened in the same VS Code workspace.
+
+Do not move files between repositories or combine their Git histories unless explicitly requested.
+
+For cross-repository integration work:
+
+1. Identify which repository owns the behavior.
+2. Make the owning change there first.
+3. Update the OpenAPI contract when applicable.
+4. Regenerate ELEVATE API types.
+5. Update the consuming ELEVATE code.
+6. Test both sides of the integration.
+7. Keep commits logically separated by repository.
+
+
 ## Documentation Standards (docs/)
 
 When working on documentation in the `docs/` directory:

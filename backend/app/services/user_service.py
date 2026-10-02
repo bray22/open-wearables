@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 from logging import Logger, getLogger
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import ValidationError
 
@@ -43,11 +43,22 @@ class UserService(AppService[UserRepository, User, UserCreateInternal, UserUpdat
         return self.crud.get_count_in_range(db_session, start_date, end_date)
 
     @handle_exceptions
-    def create(self, db_session: DbSession, creator: UserCreate) -> User:
+    def create(
+        self,
+        db_session: DbSession,
+        creator: UserCreate,
+        *,
+        idempotency_key: UUID | None = None,
+    ) -> User:
         """Create a user with server-generated id and created_at."""
+        creation_data = creator.model_dump()
+        if idempotency_key is not None:
+            user_id = uuid5(NAMESPACE_URL, f"open-wearables:user:{idempotency_key}")
+            if existing := self.crud.get(db_session, user_id):
+                return existing
+            creation_data["id"] = user_id
         if self.crud.get_by_email(db_session, creator.email):
             raise ResourceAlreadyExistsError("User with this email already exists.")
-        creation_data = creator.model_dump()
         internal_creator = UserCreateInternal(**creation_data)
         return super().create(db_session, internal_creator)
 
