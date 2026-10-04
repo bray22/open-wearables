@@ -12,14 +12,14 @@ from typing import Literal
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
 from sqlalchemy.orm import Session
 
 from app.api.routes.v1 import oauth as oauth_routes
-from app.schemas.model_crud.credentials.oauth import OAuthState
 from app.config import settings
+from app.schemas.model_crud.credentials.oauth import OAuthState
 from tests.factories import DeveloperFactory
 from tests.utils import developer_auth_headers
 
@@ -458,7 +458,7 @@ class TestOAuthCallbackProbe:
 class TestOAuthCallbackReturns:
     @staticmethod
     def _install_callback_strategy(
-        monkeypatch: MonkeyPatch,
+        monkeypatch: pytest.MonkeyPatch,
         flow_origin: Literal["web", "mobile"],
     ) -> MagicMock:
         state = OAuthState(user_id=uuid4(), provider="garmin", flow_origin=flow_origin)
@@ -472,10 +472,13 @@ class TestOAuthCallbackReturns:
         return oauth
 
     def test_mobile_success_returns_only_safe_deep_link_data(
-        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+        self, client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         oauth = self._install_callback_strategy(monkeypatch, "mobile")
-        response = client.get("/api/v1/oauth/garmin/callback", params={"code": "provider-code", "state": "server-state"})
+        response = client.get(
+            "/api/v1/oauth/garmin/callback",
+            params={"code": "provider-code", "state": "server-state"},
+        )
 
         assert response.status_code == 200
         assert "elevate://wearables/callback?provider=garmin&amp;status=success" in response.text
@@ -484,7 +487,7 @@ class TestOAuthCallbackReturns:
         oauth.complete_callback.assert_called_once()
 
     def test_web_success_ignores_callback_origin_query_parameter(
-        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+        self, client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         self._install_callback_strategy(monkeypatch, "web")
         monkeypatch.setattr(settings, "elevate_web_return_url", "https://elevatefitbody.com/member/wearables")
@@ -542,10 +545,13 @@ class TestOAuthCallbackReturns:
         assert "provider token exchange failed" not in response.text
 
     def test_expired_or_reused_state_is_rejected(
-        self, client: TestClient, db: Session, monkeypatch: MonkeyPatch,
+        self, client: TestClient, db: Session, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         oauth = MagicMock()
-        oauth.consume_callback_state.side_effect = HTTPException(status_code=400, detail="Invalid or expired state parameter")
+        oauth.consume_callback_state.side_effect = HTTPException(
+            status_code=400,
+            detail="Invalid or expired state parameter",
+        )
         monkeypatch.setattr(oauth_routes, "get_oauth_strategy", lambda _provider: SimpleNamespace(oauth=oauth))
 
         response = client.get(
